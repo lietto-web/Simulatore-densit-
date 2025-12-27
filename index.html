@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Simulatore densità popolazione</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#2563eb">
+  <link rel="apple-touch-icon" href="icon-192.png">
+
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body { margin: 0; padding: 18px; background: #f6f7f9; }
+    .card {
+      max-width: 560px; margin: 0 auto; background: white; border-radius: 16px;
+      padding: 18px; box-shadow: 0 10px 30px rgba(0,0,0,.08);
+    }
+    h1 { font-size: 20px; margin: 0 0 14px; }
+    label { display: block; font-weight: 600; margin-top: 12px; }
+    input {
+      width: 100%; box-sizing: border-box; margin-top: 6px;
+      padding: 12px 12px; border-radius: 12px; border: 1px solid #d9dde3;
+      font-size: 16px; outline: none;
+    }
+    input:focus { border-color: #7aa7ff; box-shadow: 0 0 0 4px rgba(122,167,255,.25); }
+    .row { display: flex; gap: 10px; margin-top: 14px; }
+    button {
+      flex: 1; padding: 12px; border: 0; border-radius: 12px;
+      font-weight: 700; font-size: 16px; cursor: pointer;
+    }
+    .primary { background: #2563eb; color: white; }
+    .ghost { background: #eef2ff; color: #1e3a8a; }
+    .sep { height: 1px; background: #e6e8ee; margin: 16px 0; }
+    .result { font-size: 14px; line-height: 1.6; }
+    .value { font-weight: 800; }
+    .error { color: #b91c1c; margin-top: 10px; display:none; }
+    .hint { color: #6b7280; font-size: 12px; margin-top: 10px; }
+
+    .topbar { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+    .badge {
+      font-size: 12px; font-weight: 700;
+      padding: 6px 10px; border-radius: 999px;
+      background: #eef2ff; color: #1e3a8a;
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="topbar">
+      <h1>Simulatore densità di popolazione</h1>
+      <div class="badge" id="status">Online</div>
+    </div>
+
+    <label for="area">Area (m²)</label>
+    <input id="area" inputmode="decimal" placeholder="Es. 250000" />
+
+    <label for="pop">Popolazione (persone)</label>
+    <input id="pop" inputmode="numeric" placeholder="Es. 1200" />
+
+    <div class="row">
+      <button class="primary" id="calc">Calcola</button>
+      <button class="ghost" id="reset">Reset</button>
+    </div>
+
+    <div class="error" id="error"></div>
+
+    <div class="sep"></div>
+
+    <div class="result">
+      <div>Densità (persone/m²): <span class="value" id="dens_m2">—</span></div>
+      <div>Densità (persone/km²): <span class="value" id="dens_km2">—</span></div>
+      <div class="hint">Nota: 1 km² = 1.000.000 m²</div>
+      <div class="hint">Suggerimento: su iPhone usa “Condividi → Aggiungi a Home”. Su Android spesso compare “Installa”.</div>
+    </div>
+  </div>
+
+  <script>
+    const areaEl = document.getElementById("area");
+    const popEl  = document.getElementById("pop");
+    const errEl  = document.getElementById("error");
+    const outM2  = document.getElementById("dens_m2");
+    const outKm2 = document.getElementById("dens_km2");
+    const statusEl = document.getElementById("status");
+
+    function parseFloatIT(v) {
+      v = (v ?? "").toString().trim().replace(",", ".");
+      const n = Number(v);
+      return Number.isFinite(n) ? n : NaN;
+    }
+    function parseIntClean(v) {
+      v = (v ?? "").toString().trim().replace(/\s+/g, "");
+      const n = Number(v);
+      return Number.isInteger(n) ? n : NaN;
+    }
+    function fmt(n) {
+      return n.toLocaleString("it-IT", { maximumFractionDigits: 6 });
+    }
+
+    function setError(msg) {
+      errEl.style.display = msg ? "block" : "none";
+      errEl.textContent = msg || "";
+    }
+
+    function calcola() {
+      setError("");
+
+      const area = parseFloatIT(areaEl.value);
+      const pop  = parseIntClean(popEl.value);
+
+      if (!Number.isFinite(area) || area <= 0) {
+        setError("Inserisci un'area valida (> 0). Esempio: 250000");
+        return;
+      }
+      if (!Number.isFinite(pop) || pop < 0) {
+        setError("Inserisci una popolazione valida (intero ≥ 0). Esempio: 1200");
+        return;
+      }
+
+      const densM2  = pop / area;
+      const densKm2 = densM2 * 1_000_000;
+
+      outM2.textContent  = `${fmt(densM2)} persone/m²`;
+      outKm2.textContent = `${fmt(densKm2)} persone/km²`;
+    }
+
+    function reset() {
+      areaEl.value = "";
+      popEl.value  = "";
+      outM2.textContent = "—";
+      outKm2.textContent = "—";
+      setError("");
+      areaEl.focus();
+    }
+
+    // Online/offline badge
+    function refreshOnlineStatus() {
+      statusEl.textContent = navigator.onLine ? "Online" : "Offline";
+    }
+    window.addEventListener("online", refreshOnlineStatus);
+    window.addEventListener("offline", refreshOnlineStatus);
+    refreshOnlineStatus();
+
+    document.getElementById("calc").addEventListener("click", calcola);
+    document.getElementById("reset").addEventListener("click", reset);
+
+    // Enter per calcolare
+    [areaEl, popEl].forEach(el => el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") calcola();
+    }));
+
+    // Service Worker (offline)
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("./sw.js");
+    }
+  </script>
+</body>
+</html>
