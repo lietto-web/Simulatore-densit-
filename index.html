@@ -14,20 +14,21 @@
     :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
     body { margin: 0; padding: 18px; background: #f6f7f9; }
     .card {
-      max-width: 560px; margin: 0 auto; background: white; border-radius: 16px;
+      max-width: 680px; margin: 0 auto; background: white; border-radius: 16px;
       padding: 18px; box-shadow: 0 10px 30px rgba(0,0,0,.08);
     }
     h1 { font-size: 20px; margin: 0 0 14px; }
     label { display: block; font-weight: 600; margin-top: 12px; }
-    input {
+    input, select {
       width: 100%; box-sizing: border-box; margin-top: 6px;
       padding: 12px 12px; border-radius: 12px; border: 1px solid #d9dde3;
-      font-size: 16px; outline: none;
+      font-size: 16px; outline: none; background: white;
     }
-    input:focus { border-color: #7aa7ff; box-shadow: 0 0 0 4px rgba(122,167,255,.25); }
-    .row { display: flex; gap: 10px; margin-top: 14px; }
+    input:focus, select:focus { border-color: #7aa7ff; box-shadow: 0 0 0 4px rgba(122,167,255,.25); }
+    .row { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
     button {
-      flex: 1; padding: 12px; border: 0; border-radius: 12px;
+      flex: 1; min-width: 140px;
+      padding: 12px; border: 0; border-radius: 12px;
       font-weight: 700; font-size: 16px; cursor: pointer;
     }
     .primary { background: #2563eb; color: white; }
@@ -44,6 +45,31 @@
       padding: 6px 10px; border-radius: 999px;
       background: #eef2ff; color: #1e3a8a;
       white-space: nowrap;
+    }
+
+    /* Map */
+    .map-wrap { margin-top: 14px; }
+    .map-header { display:flex; justify-content:space-between; align-items:flex-end; gap:10px; flex-wrap: wrap; }
+    .map-title { font-weight: 800; }
+    .map-sub { color:#6b7280; font-size: 12px; }
+    canvas {
+      width: 100%;
+      height: 320px;              /* altezza visiva */
+      display: block;
+      border-radius: 16px;
+      border: 1px solid #e6e8ee;
+      background: #fbfcff;
+      margin-top: 10px;
+    }
+    .legend {
+      display:flex; gap:10px; flex-wrap: wrap; align-items:center;
+      margin-top: 10px; color:#374151; font-size: 12px;
+    }
+    .chip { padding: 6px 10px; border-radius: 999px; background:#f3f4f6; }
+    .scale {
+      width: 140px; height: 10px; border-radius: 999px;
+      background: linear-gradient(90deg, #eff6ff, #1d4ed8);
+      border: 1px solid #e6e8ee;
     }
   </style>
 </head>
@@ -73,8 +99,37 @@
       <div>Densità (persone/m²): <span class="value" id="dens_m2">—</span></div>
       <div>Densità (persone/km²): <span class="value" id="dens_km2">—</span></div>
       <div class="hint">Nota: 1 km² = 1.000.000 m²</div>
-      <div class="hint">Suggerimento: su iPhone usa “Condividi → Aggiungi a Home”. Su Android spesso compare “Installa”.</div>
     </div>
+
+    <div class="map-wrap">
+      <div class="map-header">
+        <div>
+          <div class="map-title">Mappa (schematica)</div>
+          <div class="map-sub" id="mapInfo">Inserisci i valori e premi Calcola.</div>
+        </div>
+
+        <div style="min-width: 260px;">
+          <label for="mapMode" style="margin-top:0;">Visualizzazione</label>
+          <select id="mapMode">
+            <option value="heat">Heatmap densità</option>
+            <option value="dots">Punti (dot density)</option>
+          </select>
+        </div>
+      </div>
+
+      <canvas id="map" width="900" height="450" aria-label="Mappa densità"></canvas>
+
+      <div class="legend">
+        <div class="chip" id="legendLeft">Bassa</div>
+        <div class="scale" aria-hidden="true"></div>
+        <div class="chip" id="legendRight">Alta</div>
+        <div class="chip" id="dotsNote" style="display:none;"></div>
+      </div>
+
+      <div class="hint">Questa mappa è un’anteprima “grafica” (non geografica). Se vuoi una mappa reale (Roma, Napoli, ecc.) posso aggiungere Leaflet con coordinate/bounding box.</div>
+    </div>
+
+    <div class="hint">PWA: iPhone → Safari → Condividi → “Aggiungi a Home”. Android → Chrome → “Installa app”.</div>
   </div>
 
   <script>
@@ -84,6 +139,12 @@
     const outM2  = document.getElementById("dens_m2");
     const outKm2 = document.getElementById("dens_km2");
     const statusEl = document.getElementById("status");
+
+    const canvas = document.getElementById("map");
+    const ctx = canvas.getContext("2d");
+    const mapModeEl = document.getElementById("mapMode");
+    const mapInfoEl = document.getElementById("mapInfo");
+    const dotsNoteEl = document.getElementById("dotsNote");
 
     function parseFloatIT(v) {
       v = (v ?? "").toString().trim().replace(",", ".");
@@ -95,8 +156,8 @@
       const n = Number(v);
       return Number.isInteger(n) ? n : NaN;
     }
-    function fmt(n) {
-      return n.toLocaleString("it-IT", { maximumFractionDigits: 6 });
+    function fmt(n, maxFrac = 6) {
+      return n.toLocaleString("it-IT", { maximumFractionDigits: maxFrac });
     }
 
     function setError(msg) {
@@ -104,6 +165,146 @@
       errEl.textContent = msg || "";
     }
 
+    // ---- MAP DRAWING ----
+    function clearMap() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // fondo
+      ctx.fillStyle = "#fbfcff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    // Mappa densità -> colore (più denso = più blu scuro)
+    // Usiamo una funzione log per avere una scala leggibile.
+    function densityToT(densKm2) {
+      // densKm2: persone/km²
+      // range tipico: 0 .. 50.000+ (città dense)
+      const x = Math.max(0, densKm2);
+      const t = Math.log10(1 + x) / Math.log10(1 + 50000); // normalizza su 0..1
+      return Math.max(0, Math.min(1, t));
+    }
+
+    function lerp(a,b,t){ return a + (b-a)*t; }
+
+    function heatColor(t) {
+      // Interpolazione tra #eff6ff (239,246,255) e #1d4ed8 (29,78,216)
+      const r = Math.round(lerp(239, 29, t));
+      const g = Math.round(lerp(246, 78, t));
+      const b = Math.round(lerp(255, 216, t));
+      return `rgb(${r},${g},${b})`;
+    }
+
+    function drawFrameAndGrid(sideMeters) {
+      // area disegnata
+      const pad = 26;
+      const W = canvas.width, H = canvas.height;
+      const size = Math.min(W, H) - pad*2;
+      const x0 = (W - size) / 2;
+      const y0 = (H - size) / 2;
+
+      // cornice
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "rgba(17,24,39,0.18)";
+      ctx.strokeRect(x0, y0, size, size);
+
+      // griglia (10x10)
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = "rgba(17,24,39,0.08)";
+      for (let i=1; i<10; i++) {
+        const x = x0 + (size/10)*i;
+        const y = y0 + (size/10)*i;
+        ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y0+size); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0+size, y); ctx.stroke();
+      }
+
+      // label
+      ctx.fillStyle = "rgba(17,24,39,0.75)";
+      ctx.font = "bold 18px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+      ctx.fillText("Area (schematica)", 18, 30);
+
+      ctx.font = "14px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+      const sideText = `Lato ≈ ${fmt(sideMeters, 2)} m (area assunta come quadrato)`;
+      ctx.fillText(sideText, 18, 52);
+
+      return { x0, y0, size };
+    }
+
+    function drawHeat(areaM2, pop) {
+      clearMap();
+      const side = Math.sqrt(areaM2);
+
+      const densM2 = pop / areaM2;
+      const densKm2 = densM2 * 1_000_000;
+      const t = densityToT(densKm2);
+
+      const { x0, y0, size } = drawFrameAndGrid(side);
+
+      // riempimento heat
+      ctx.fillStyle = heatColor(t);
+      ctx.globalAlpha = 0.85;
+      ctx.fillRect(x0, y0, size, size);
+      ctx.globalAlpha = 1;
+
+      // testo densità
+      ctx.fillStyle = "rgba(17,24,39,0.85)";
+      ctx.font = "bold 22px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+      ctx.fillText(`${fmt(densKm2, 0)} persone/km²`, 18, canvas.height - 24);
+
+      dotsNoteEl.style.display = "none";
+    }
+
+    function drawDots(areaM2, pop) {
+      clearMap();
+      const side = Math.sqrt(areaM2);
+      const densM2 = pop / areaM2;
+      const densKm2 = densM2 * 1_000_000;
+
+      const { x0, y0, size } = drawFrameAndGrid(side);
+
+      // fondo leggero in base densità (aiuta a “sentire” la densità)
+      const t = densityToT(densKm2);
+      ctx.fillStyle = heatColor(t);
+      ctx.globalAlpha = 0.25;
+      ctx.fillRect(x0, y0, size, size);
+      ctx.globalAlpha = 1;
+
+      // limite puntini per performance
+      const MAX_DOTS = 2500;
+      const dots = Math.max(0, Math.min(pop, MAX_DOTS));
+      const peoplePerDot = pop > 0 && dots > 0 ? pop / dots : 0;
+
+      // disegna puntini
+      ctx.fillStyle = "rgba(17,24,39,0.35)";
+      for (let i = 0; i < dots; i++) {
+        const rx = x0 + Math.random() * size;
+        const ry = y0 + Math.random() * size;
+        const r = 2.2; // raggio
+        ctx.beginPath();
+        ctx.arc(rx, ry, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // testo densità
+      ctx.fillStyle = "rgba(17,24,39,0.85)";
+      ctx.font = "bold 22px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+      ctx.fillText(`${fmt(densKm2, 0)} persone/km²`, 18, canvas.height - 24);
+
+      // nota “ogni punto = N persone” se campionato
+      if (pop > MAX_DOTS) {
+        dotsNoteEl.style.display = "inline-block";
+        dotsNoteEl.textContent = `Ogni punto ≈ ${fmt(peoplePerDot, 1)} persone`;
+      } else {
+        dotsNoteEl.style.display = "none";
+      }
+    }
+
+    function drawMap(areaM2, pop) {
+      const mode = mapModeEl.value;
+      mapInfoEl.textContent = `Area: ${fmt(areaM2, 2)} m² • Popolazione: ${fmt(pop, 0)} persone`;
+      if (mode === "heat") drawHeat(areaM2, pop);
+      else drawDots(areaM2, pop);
+    }
+
+    // ---- MAIN CALC ----
     function calcola() {
       setError("");
 
@@ -122,8 +323,10 @@
       const densM2  = pop / area;
       const densKm2 = densM2 * 1_000_000;
 
-      outM2.textContent  = `${fmt(densM2)} persone/m²`;
-      outKm2.textContent = `${fmt(densKm2)} persone/km²`;
+      outM2.textContent  = `${fmt(densM2, 6)} persone/m²`;
+      outKm2.textContent = `${fmt(densKm2, 0)} persone/km²`;
+
+      drawMap(area, pop);
     }
 
     function reset() {
@@ -132,6 +335,9 @@
       outM2.textContent = "—";
       outKm2.textContent = "—";
       setError("");
+      mapInfoEl.textContent = "Inserisci i valori e premi Calcola.";
+      dotsNoteEl.style.display = "none";
+      clearMap();
       areaEl.focus();
     }
 
@@ -150,6 +356,18 @@
     [areaEl, popEl].forEach(el => el.addEventListener("keydown", (e) => {
       if (e.key === "Enter") calcola();
     }));
+
+    // Se cambio modalità mappa, ridisegno se ho già numeri validi
+    mapModeEl.addEventListener("change", () => {
+      const area = parseFloatIT(areaEl.value);
+      const pop  = parseIntClean(popEl.value);
+      if (Number.isFinite(area) && area > 0 && Number.isFinite(pop) && pop >= 0) {
+        drawMap(area, pop);
+      }
+    });
+
+    // Init canvas
+    clearMap();
 
     // Service Worker (offline)
     if ("serviceWorker" in navigator) {
